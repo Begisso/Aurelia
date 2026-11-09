@@ -163,8 +163,6 @@ namespace Aurelia
             var d = new Dictionary<string, string>();
             st.WriteTo(d);
             // stable order
-            Kv(sb, "Clarity", d["Clarity"]);
-            Kv(sb, "Loudness", d["Loudness"]);
             Kv(sb, "OutputGain", d["OutputGain"]);
             Kv(sb, "Bands", d["Bands"]);
             for (int i = 0; i < st.Bands.Count; i++) Kv(sb, "Band" + (i + 1), d["Band" + (i + 1)]);

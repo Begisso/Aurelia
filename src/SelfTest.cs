@@ -184,8 +184,6 @@ namespace Aurelia
                 b.MS = rnd.NextDouble() * 2 - 1;
                 s.Bands.Add(b);
             }
-            s.Clarity = rnd.NextDouble() * 10;
-            s.Loudness = rnd.NextDouble() * 10;
             s.OutputGain = rnd.NextDouble() * 24 - 12;
             return s;
         }
@@ -197,8 +195,7 @@ namespace Aurelia
             var typical = new EqState();
             double[] fr = { 62.5, 86, 221, 450, 630, 1250, 2700, 5300, 11000, 16000 };
             foreach (var x in fr) typical.Bands.Add(new Band { Freq = x, Gain = -6, Q = 1 });
-            typical.Clarity = 5; typical.Loudness = 5;
-            BenchOne("typical (10 bells + Clarity + Loudness)", typical);
+            BenchOne("typical (10 bells)", typical);
 
             var worst = new EqState();
             for (int i = 0; i < EqState.MaxBands; i++)
@@ -208,7 +205,6 @@ namespace Aurelia
                 b.MidSide = i % 2 == 1; b.MS = 0.3;
                 worst.Bands.Add(b);
             }
-            worst.Clarity = 10; worst.Loudness = 10;
             BenchOne("worst case (20 bands, 8× 96 dB/oct cuts, M/S blends)", worst);
         }
 
@@ -256,23 +252,11 @@ namespace Aurelia
 
             AudioDevice src = null, outp = null;
             foreach (var d in devs)
-                if (d.LooksVirtual && (src == null || d.Name.ToLowerInvariant().Contains("fxsound"))) src = d;
-            string fxOut = FxSoundImport.ReadSetting("output_device_id");
+                if (d.LooksVirtual && (src == null || Controller.Rank(d) > Controller.Rank(src))) src = d;
             foreach (var d in devs)
-                if (d != src && string.Equals(d.Id, fxOut, StringComparison.OrdinalIgnoreCase)) outp = d;
-            if (outp == null)
-                foreach (var d in devs)
-                    if (d != src && (outp == null || Devices.ListenScore(d) > Devices.ListenScore(outp))) outp = d;
+                if (d != src && (outp == null || Devices.ListenScore(d) > Devices.ListenScore(outp))) outp = d;
             W("  Source (capture): " + (src != null ? src.Name : "NONE"));
             W("  Output (render):  " + (outp != null ? outp.Name : "NONE"));
-
-            W("");
-            W("[FxSound user presets]");
-            foreach (var kv in FxSoundImport.LoadUserPresets())
-            {
-                W("  '" + kv.Key + "': " + kv.Value.Bands.Count + " bands, Clarity " + F(kv.Value.Clarity) + ", Loudness " + F(kv.Value.Loudness));
-                foreach (var b in kv.Value.Bands) W("      " + Band.TypeNames[(int)b.Type] + "  " + b.Describe());
-            }
 
             if (src == null || outp == null) { W("  (engine test skipped: devices missing)"); return f + 1; }
 
@@ -282,7 +266,6 @@ namespace Aurelia
             eng.MuteOutput = true;
             var st = new EqState();
             st.Bands.Add(new Band { Freq = 1000, Gain = 3, Q = 1 });
-            st.Clarity = 3;
             eng.Snapshot = new DspSnapshot(st, true);
             eng.Dsp.Tap.Enabled = true;
             eng.Start(src.Id, outp.Id);

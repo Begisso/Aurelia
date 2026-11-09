@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -18,7 +17,6 @@ namespace Aurelia
         public string SourceName = "", OutputName = "";
         public List<AudioDevice> Devices_ = new List<AudioDevice>();
         public string Problem = "";                 // routing problem shown in the banner
-        public bool FxSoundRunning;
         public bool DryRun;                         // preview mode: no default-device changes, muted output, nothing saved
 
         public event Action Changed;                // routing / status changed
@@ -44,7 +42,7 @@ namespace Aurelia
         public void Initialize(Control uiControl)
         {
             ui = uiControl;
-            if (Cfg.IsFirstRun) FirstRunImport();
+            if (Cfg.IsFirstRun) { SetAutoStart(true); SaveNow(); } // start with Windows by default
 
             debounce = new Timer(); debounce.Interval = 400;
             debounce.Tick += delegate { debounce.Stop(); ApplyRouting(); };
@@ -61,30 +59,8 @@ namespace Aurelia
                 notifyEnum.RegisterEndpointNotificationCallback(this);
             }
             catch { notifyEnum = null; }
-            FxSoundRunning = DetectFxSound();
             ApplyRouting();
             if (AutoStartEnabled) SetAutoStart(true); // refresh path in case the exe was moved
-        }
-
-        void FirstRunImport()
-        {
-            // Carry over FxSound's custom (user) presets and its chosen output device. Factory presets are skipped.
-            foreach (var kv in FxSoundImport.LoadUserPresets())
-            {
-                string name = Settings.CleanName(kv.Key);
-                if (name.Length > 0 && !Cfg.Presets.ContainsKey(name)) Cfg.Presets[name] = kv.Value;
-            }
-            string fxPreset = FxSoundImport.ReadSetting("preset");
-            if (fxPreset != null && Cfg.Presets.ContainsKey(fxPreset))
-            {
-                State = Cfg.Presets[fxPreset].Clone();
-                Cfg.PresetName = fxPreset;
-            }
-            string fxOut = FxSoundImport.ReadSetting("output_device_id");
-            if (!string.IsNullOrEmpty(fxOut)) Cfg.OutputId = fxOut;
-            SetAutoStart(true); // requested behaviour: start with Windows by default
-            Cfg.Current = State;
-            SaveNow();
         }
 
         // ---------------- DSP / persistence ----------------
@@ -172,25 +148,6 @@ namespace Aurelia
             if (string.Equals(Cfg.PresetName, oldName, StringComparison.OrdinalIgnoreCase)) Cfg.PresetName = newName;
             SaveNow();
             FirePresets();
-        }
-
-        public int ImportFac(string[] files)
-        {
-            int count = 0;
-            double q = Num.Clamp(Num.P(FxSoundImport.ReadSetting("filter_q"), 1.0), 0.1, 10);
-            foreach (var f in files)
-            {
-                string name;
-                var st = FxSoundImport.ParseFac(f, q, out name);
-                name = Settings.CleanName(name);
-                if (st == null || name.Length == 0) continue;
-                string unique = name;
-                for (int i = 2; Cfg.Presets.ContainsKey(unique); i++) unique = name + " (" + i + ")";
-                Cfg.Presets[unique] = st;
-                count++;
-            }
-            if (count > 0) { SaveNow(); FirePresets(); }
-            return count;
         }
 
         public void ResetEq()
@@ -320,10 +277,11 @@ namespace Aurelia
             Fire();
         }
 
-        static int Rank(AudioDevice d)
+        /// Preference among virtual capture devices (higher wins).
+        public static int Rank(AudioDevice d)
         {
             string n = d.Name.ToLowerInvariant();
-            if (n.Contains("fxsound")) return 5;
+            if (n.Contains("dfx") || n.Contains("audio enhancer")) return 5;
             if (n.Contains("cable input") || n.Contains("vb-audio")) return 4;
             if (n.Contains("voicemeeter")) return 3;
             if (n.Contains("steam streaming speakers")) return 2;
@@ -378,42 +336,12 @@ namespace Aurelia
 
         void Poll()
         {
-            bool fx = DetectFxSound();
             string st = Engine.Status ?? "";
-            if (fx != FxSoundRunning || st != lastEngineStatus)
+            if (st != lastEngineStatus)
             {
-                FxSoundRunning = fx;
                 lastEngineStatus = st;
                 Fire();
             }
-        }
-
-        static bool DetectFxSound()
-        {
-            try
-            {
-                var p = Process.GetProcessesByName("FxSound");
-                bool r = p.Length > 0;
-                foreach (var x in p) x.Dispose();
-                return r;
-            }
-            catch { return false; }
-        }
-
-        public void CloseFxSound()
-        {
-            try
-            {
-                foreach (var p in Process.GetProcessesByName("FxSound"))
-                {
-                    try { p.Kill(); p.WaitForExit(2000); } catch { }
-                    p.Dispose();
-                }
-            }
-            catch { }
-            FxSoundRunning = DetectFxSound();
-            ScheduleRouting();
-            Fire();
         }
 
         void ScheduleRouting()

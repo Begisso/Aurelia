@@ -155,7 +155,7 @@ namespace Aurelia
         static readonly PropertyKey PKEY_FormFactor = new PropertyKey(new Guid("1da5d803-d492-4edd-8c23-e0c0ffee7f0e"), 0);
 
         static readonly string[] VirtualHints = {
-            "fxsound", "cable input", "vb-audio", "voicemeeter", "steam streaming speakers",
+            "dfx", "audio enhancer", "cable input", "vb-audio", "voicemeeter", "steam streaming speakers",
             "virtual", "vac", "line 1", "blackhole", "soundflower", "obs"
         };
 

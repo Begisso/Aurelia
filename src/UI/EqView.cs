@@ -63,12 +63,14 @@ namespace Aurelia
         }
     }
 
-    /// Parametric EQ editor: frequency-response display, draggable band nodes, analyzer, meter and band panel.
+    /// Parametric EQ editor: frequency-response display, draggable band nodes, analyzer and meter.
+    /// The selected band's controls live in the bottom bar (BandUiChanged tells it to refresh).
     sealed class EqView : WidgetHost
     {
-        const double FMin = 10, FMax = 24000;
+        public const double FMin = 10, FMax = 24000;
         readonly Controller ctl;
         public Action Edited;
+        public Action BandUiChanged;
 
         public int Selected = -1;
         int hoverNode = -1, dragNode = -1;
@@ -107,14 +109,7 @@ namespace Aurelia
         float mL = -120, mR = -120, hL = -120, hR = -120;
         int holdTL, holdTR;
 
-        // band panel
-        readonly Box panel;
-        readonly PowerToggle bandPower;
-        readonly Label_ bandTitle, bandCount;
-        readonly Button_ shapeBtn, slopeBtn, prevBtn, nextBtn, delBtn, rangeBtn;
-        readonly Knob kFreq, kGain, kQ, kMS;
-        readonly Segmented placement;
-        readonly Widget[] panelWidgets;
+        readonly Button_ rangeBtn;
 
         public EqView(Controller c)
         {
@@ -122,40 +117,8 @@ namespace Aurelia
             range = ctl.Cfg.DisplayRange;
             TabStop = true;
 
-            panel = Add(new Box { Fill = Theme.Panel, Line = Theme.ControlLine, Radius = 12 });
-            bandPower = Add(new PowerToggle { Tip = "Enable / bypass band (double-click node)" });
-            bandPower.Toggled = on => { var b = Sel; if (b != null) { b.Enabled = on; BandsChanged(); } };
-            bandTitle = Add(new Label_ { Font = Theme.UIBold, Color = Theme.Text });
-            bandCount = Add(new Label_ { Font = Theme.UISmall, Color = Theme.TextFaint, Flags = TextFormatFlags.Right | TextFormatFlags.VerticalCenter });
-            shapeBtn = Add(new Button_ { DropArrow = true, Tip = "Filter shape" });
-            shapeBtn.Click = () => ShowShapeMenu(new Point(shapeBtn.Bounds.X, shapeBtn.Bounds.Bottom));
-            slopeBtn = Add(new Button_ { DropArrow = true, Tip = "Cut slope" });
-            slopeBtn.Click = () => ShowSlopeMenu(new Point(slopeBtn.Bounds.X, slopeBtn.Bounds.Bottom));
-
-            kFreq = Add(new Knob { Label = "FREQ", Min = FMin, Max = FMax, Log = true, Default = 1000, Format = Num.FormatFreq, Tip = "Frequency (10 Hz - 24 kHz)" });
-            kFreq.Changed = v => { var b = Sel; if (b != null) { b.Freq = v; BandsChanged(); } };
-            kGain = Add(new Knob { Label = "GAIN", Min = -Band.MaxGain, Max = Band.MaxGain, Bipolar = true, Default = 0, Format = Num.FormatDb, Tip = "Gain (±30 dB)" });
-            kGain.Changed = v => { var b = Sel; if (b != null) { b.Gain = Math.Round(v, 2); BandsChanged(); } };
-            kQ = Add(new Knob { Label = "Q", Min = Band.MinQ, Max = Band.MaxQ, Log = true, Default = 1, Format = Num.FormatQ, Tip = "Q / bandwidth (0.025 - 40); for cuts: resonance" });
-            kQ.Changed = v => { var b = Sel; if (b != null) { b.Q = v; BandsChanged(); } };
-
-            placement = Add(new Segmented { Options = new[] { "Stereo", "Mid/Side" }, Tip = "Process this band on L/R together, or on Mid/Side" });
-            placement.SelectedChanged = i => { var b = Sel; if (b != null) { b.MidSide = i == 1; BandsChanged(); } };
-            kMS = Add(new Knob { Label = "MID  ·  SIDE", Min = -1, Max = 1, Bipolar = true, Default = 0, Format = Num.FormatMS, LeftHint = "M", RightHint = "S", Accent = Theme.Side,
-                                 Tip = "Mid ← → Side. Centre = both. Double-click = centre, right-click = type (mid / side / -0.5 ...)" });
-            kMS.Changed = v => { var b = Sel; if (b != null) { b.MS = Math.Round(v, 3); BandsChanged(); } };
-
-            prevBtn = Add(new Button_ { Icon = Glyph.Left, Tip = "Previous band" });
-            prevBtn.Click = () => StepSelection(-1);
-            nextBtn = Add(new Button_ { Icon = Glyph.Right, Tip = "Next band" });
-            nextBtn.Click = () => StepSelection(1);
-            delBtn = Add(new Button_ { Icon = Glyph.Close, Tip = "Delete band (Del / Alt+click node)" });
-            delBtn.Click = () => { if (Selected >= 0) DeleteBand(Selected); };
             rangeBtn = Add(new Button_ { Flat = true, TextColor = Theme.Accent, Tip = "Display range" });
             rangeBtn.Click = ShowRangeMenu;
-
-            panelWidgets = new Widget[] { panel, bandPower, bandTitle, bandCount, shapeBtn, slopeBtn, kFreq, kGain, kQ, placement, kMS, prevBtn, nextBtn, delBtn };
-            foreach (var k in new[] { kFreq, kGain, kQ, kMS }) k.KnobSize = Theme.S(k == kMS ? 40 : 52);
 
             timer.Interval = 33;
             timer.Tick += delegate { Frame(); };
@@ -165,6 +128,7 @@ namespace Aurelia
         }
 
         Band Sel { get { return Selected >= 0 && Selected < ctl.State.Bands.Count ? ctl.State.Bands[Selected] : null; } }
+        public Band SelectedBand { get { return Sel; } }
         List<Band> Bands { get { return ctl.State.Bands; } }
 
         /// Alternative signal source for analyzer/meter (used by the --screenshot demo).
@@ -205,7 +169,7 @@ namespace Aurelia
             }
         }
 
-        Color BandColor(Band b) { return Theme.BandColors[Math.Max(0, b.ColorIndex) % Theme.BandColors.Length]; }
+        public Color BandColor(Band b) { return Theme.BandColors[Math.Max(0, b.ColorIndex) % Theme.BandColors.Length]; }
 
         // ------------------------------------------------------------ geometry
 
@@ -224,28 +188,10 @@ namespace Aurelia
 
         void LayoutAll()
         {
-            // band panel lives in its own strip under the graph (below the frequency labels), so it never covers nodes or curves
-            int right = Theme.S(58), labels = Theme.S(22), ph = Theme.S(124), strip = ph + Theme.S(16);
-            plot = new Rectangle(0, Theme.S(4), Math.Max(10, Width - right), Math.Max(10, Height - Theme.S(4) - labels - strip));
+            int right = Theme.S(58), labels = Theme.S(22);
+            plot = new Rectangle(0, Theme.S(4), Math.Max(10, Width - right), Math.Max(10, Height - Theme.S(4) - labels));
             meterRect = new Rectangle(Width - Theme.S(16), plot.Y + Theme.S(30), Theme.S(10), plot.Height - Theme.S(30));
             rangeBtn.Bounds = new Rectangle(plot.Right + Theme.S(2), plot.Y + Theme.S(2), Theme.S(52), Theme.S(22));
-
-            int pw = Math.Min(Theme.S(700), plot.Width - Theme.S(16));
-            int px = plot.X + (plot.Width - pw) / 2, py = plot.Bottom + labels + Theme.S(6);
-            panel.Bounds = new Rectangle(px, py, pw, ph);
-            bandPower.Bounds = new Rectangle(px + Theme.S(12), py + Theme.S(12), Theme.S(26), Theme.S(26));
-            bandTitle.Bounds = new Rectangle(px + Theme.S(46), py + Theme.S(12), Theme.S(96), Theme.S(26));
-            shapeBtn.Bounds = new Rectangle(px + Theme.S(12), py + Theme.S(48), Theme.S(130), Theme.S(28));
-            slopeBtn.Bounds = new Rectangle(px + Theme.S(12), py + Theme.S(84), Theme.S(130), Theme.S(28));
-            kFreq.Bounds = new Rectangle(px + Theme.S(162), py + Theme.S(12), Theme.S(90), Theme.S(96));
-            kGain.Bounds = new Rectangle(px + Theme.S(262), py + Theme.S(12), Theme.S(90), Theme.S(96));
-            kQ.Bounds = new Rectangle(px + Theme.S(362), py + Theme.S(12), Theme.S(90), Theme.S(96));
-            placement.Bounds = new Rectangle(px + Theme.S(474), py + Theme.S(12), Theme.S(132), Theme.S(24));
-            kMS.Bounds = new Rectangle(px + Theme.S(496), py + Theme.S(42), Theme.S(88), Theme.S(78));
-            prevBtn.Bounds = new Rectangle(px + pw - Theme.S(74), py + Theme.S(12), Theme.S(30), Theme.S(26));
-            nextBtn.Bounds = new Rectangle(px + pw - Theme.S(42), py + Theme.S(12), Theme.S(30), Theme.S(26));
-            bandCount.Bounds = new Rectangle(px + pw - Theme.S(80), py + Theme.S(48), Theme.S(68), Theme.S(20));
-            delBtn.Bounds = new Rectangle(px + pw - Theme.S(42), py + Theme.S(86), Theme.S(30), Theme.S(26));
 
             colStep = Math.Max(1, Theme.S(2));
             cols = plot.Width / colStep + 2;
@@ -439,13 +385,6 @@ namespace Aurelia
             g.ResetClip();
 
             PaintWidgets(g, e.ClipRectangle);
-            if (Sel != null)
-            {
-                // colour tab on the panel identifies the band being edited
-                var c = BandColor(Sel);
-                using (var br = new SolidBrush(c)) g.FillRectangle(br, panel.Bounds.X + Theme.S(16), panel.Bounds.Y, panel.Bounds.Width - Theme.S(32), Theme.S(2));
-            }
-            else Theme.TextC(g, "Click a band node to edit it  ·  double-click the graph to add one", Theme.UI, Theme.TextFaint, panel.Bounds);
             DrawMeter(g);
             DrawOverlay(g);
         }
@@ -722,7 +661,7 @@ namespace Aurelia
 
         // ------------------------------------------------------------ editing
 
-        void BandsChanged()
+        public void BandsChanged()
         {
             curvesDirty = layerDirty = true;
             SyncPanel();
@@ -743,36 +682,10 @@ namespace Aurelia
             Invalidate();
         }
 
-        void StepSelection(int d)
-        {
-            if (Bands.Count == 0) return;
-            int i = Selected < 0 ? 0 : (Selected + d + Bands.Count) % Bands.Count;
-            Select(i);
-        }
-
         void SyncPanel()
         {
-            var b = Sel;
-            bool vis = b != null;
-            foreach (var w in panelWidgets) w.Visible = vis || w == panel;
             rangeBtn.Text = range.ToString("0", CultureInfo.InvariantCulture) + " dB";
-            if (!vis) return;
-            bandPower.On = b.Enabled;
-            bandTitle.Text = "Band " + (Selected + 1);
-            bandTitle.Color = BandColor(b);
-            bandCount.Text = Bands.Count + " / " + EqState.MaxBands;
-            shapeBtn.Text = Band.TypeNames[(int)b.Type];
-            slopeBtn.Visible = b.HasSlope;
-            slopeBtn.Text = b.Slope + " dB/oct";
-            kFreq.Value = Math.Max(FMin, Math.Min(FMax, b.Freq));
-            kGain.Value = b.Gain;
-            kGain.Enabled = b.HasGain;
-            kQ.Value = b.Q;
-            kQ.Default = b.HasSlope || b.Type == FilterType.LowShelf || b.Type == FilterType.HighShelf ? 0.7071 : 1;
-            kQ.Enabled = !(b.HasSlope && b.Slope == 6);
-            placement.Selected = b.MidSide ? 1 : 0;
-            kMS.Value = b.MS;
-            kMS.Enabled = b.MidSide;
+            if (BandUiChanged != null) BandUiChanged();
         }
 
         void AddBand(double freq, double gain)
@@ -789,7 +702,7 @@ namespace Aurelia
             BandsChanged();
         }
 
-        void DeleteBand(int i)
+        public void DeleteBand(int i)
         {
             if (i < 0 || i >= Bands.Count) return;
             Bands.RemoveAt(i);
@@ -939,7 +852,7 @@ namespace Aurelia
             m.Show(this, at);
         }
 
-        void SetType(FilterType t)
+        public void SetType(FilterType t)
         {
             var b = Sel;
             if (b == null || b.Type == t) return;
@@ -950,7 +863,7 @@ namespace Aurelia
             BandsChanged();
         }
 
-        void AddShapeItems(ToolStripItemCollection items)
+        public void AddShapeItems(ToolStripItemCollection items)
         {
             var b = Sel;
             for (int t = 0; t < Band.TypeNames.Length; t++)
@@ -962,7 +875,7 @@ namespace Aurelia
             }
         }
 
-        void AddSlopeItems(ToolStripItemCollection items)
+        public void AddSlopeItems(ToolStripItemCollection items)
         {
             var b = Sel;
             foreach (int s in Band.Slopes)
@@ -972,20 +885,6 @@ namespace Aurelia
                 it.Checked = b != null && b.Slope == s;
                 items.Add(it);
             }
-        }
-
-        void ShowShapeMenu(Point at)
-        {
-            var m = Theme.Menu();
-            AddShapeItems(m.Items);
-            Popup(m, at);
-        }
-
-        void ShowSlopeMenu(Point at)
-        {
-            var m = Theme.Menu();
-            AddSlopeItems(m.Items);
-            Popup(m, at);
         }
 
         void ShowBandMenu(Point at)

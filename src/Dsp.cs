@@ -196,18 +196,7 @@ namespace Aurelia
         readonly Chain[] mid = new Chain[EqState.MaxBands], side = new Chain[EqState.MaxBands];
         readonly Band[] designed = new Band[EqState.MaxBands];
         int bandCount;
-        double[] bufA = new double[0], bufB = new double[0], tmp = new double[0], harm = new double[0];
-
-        // Clarity: high shelf + envelope-normalised harmonic exciter
-        readonly Chain fidShelfL = new Chain(), fidShelfR = new Chain();
-        readonly double[] hp1 = new double[5], hp2 = new double[5];
-        double e1aL, e1bL, e1aR, e1bR, e2aL, e2bL, e2aR, e2bR, envL, envR, envK, fidAmount;
-        bool fidOn;
-
-        // Dynamic boost: stereo-linked compressor with make-up gain
-        bool dynOn;
-        double dynT, dynSlope, dynMakeup, dynEnv, dynGain = 1, dynTarget = 1, dynAtt, dynRel, detAtt, detRel;
-        int dynCounter;
+        double[] bufA = new double[0], bufB = new double[0], tmp = new double[0];
 
         // Look-ahead peak limiter
         double[] dlL = new double[512], dlR = new double[512];
@@ -235,13 +224,6 @@ namespace Aurelia
             fs = sampleRate;
             Tap.SampleRate = (int)sampleRate;
             for (int i = 0; i < EqState.MaxBands; i++) { designed[i] = null; mid[i].Count = 0; side[i].Count = 0; }
-            DesignHp(hp1, 3500, 0.7071);
-            DesignHp(hp2, 5000, 0.7071);
-            envK = 1 - Math.Exp(-1 / (0.005 * fs));
-            detAtt = Math.Exp(-1 / (0.002 * fs));
-            detRel = Math.Exp(-1 / (0.200 * fs));
-            dynAtt = 1 - Math.Exp(-1 / (0.008 * fs));
-            dynRel = 1 - Math.Exp(-1 / (0.300 * fs));
             dlLen = Math.Max(16, Math.Min(dlL.Length, (int)(0.0015 * fs)));
             limAtt = 1 - Math.Exp(-1 / (dlLen / 4.0));
             limRel = 1 - Math.Exp(-1 / (0.080 * fs));
@@ -250,18 +232,9 @@ namespace Aurelia
             ResetStates();
         }
 
-        void DesignHp(double[] c, double f, double q)
-        {
-            double w = 2 * Math.PI * f / fs, cs = Math.Cos(w), al = Math.Sin(w) / (2 * q), a0 = 1 + al;
-            c[0] = (1 + cs) / 2 / a0; c[1] = -(1 + cs) / a0; c[2] = (1 + cs) / 2 / a0; c[3] = -2 * cs / a0; c[4] = (1 - al) / a0;
-        }
-
         void ResetStates()
         {
             for (int i = 0; i < EqState.MaxBands; i++) { mid[i].Reset(); side[i].Reset(); }
-            fidShelfL.Reset(); fidShelfR.Reset();
-            e1aL = e1bL = e1aR = e1bR = e2aL = e2bL = e2aR = e2bR = envL = envR = 0;
-            dynEnv = 0; dynGain = 1; dynTarget = 1; dynCounter = 0;
             Array.Clear(dlL, 0, dlL.Length); Array.Clear(dlR, 0, dlR.Length);
             dlPos = 0; limEnv = 0; limGain = 1;
         }
@@ -281,31 +254,6 @@ namespace Aurelia
             }
             for (int i = n; i < EqState.MaxBands; i++) { mid[i].Count = 0; side[i].Count = 0; designed[i] = null; }
             bandCount = n;
-
-            // Clarity (harmonic exciter + gentle air shelf)
-            bool fidWas = fidOn;
-            fidOn = st.Clarity > 0.01;
-            if (fidOn)
-            {
-                fidShelfL.Count = FilterDesign.Design(FilterType.HighShelf, 7000, 0.5 * st.Clarity, 0.7, 12, fs, fidShelfL.C);
-                Array.Copy(fidShelfL.C, fidShelfR.C, 5);
-                fidShelfR.Count = fidShelfL.Count;
-                fidAmount = 0.06 * st.Clarity;
-                if (!fidWas) { fidShelfL.Reset(); fidShelfR.Reset(); e1aL = e1bL = e1aR = e1bR = e2aL = e2bL = e2aR = e2bR = envL = envR = 0; }
-            }
-
-            // Loudness (stereo-linked compressor with make-up gain)
-            bool dynWas = dynOn;
-            dynOn = st.Loudness > 0.01;
-            if (dynOn)
-            {
-                double v = st.Loudness;
-                dynT = -4 - 1.6 * v;
-                dynSlope = 1 - 1 / (1 + 0.25 * v);
-                dynMakeup = 1.2 * v;
-                if (!dynWas) { dynEnv = 0; dynGain = 1; dynTarget = 1; dynCounter = 0; }
-            }
-
             outGain = Math.Pow(10, st.OutputGain / 20);
         }
 
@@ -342,7 +290,7 @@ namespace Aurelia
         {
             if (bufA.Length >= n) return;
             int sz = Math.Max(n, 4096);
-            bufA = new double[sz]; bufB = new double[sz]; tmp = new double[sz]; harm = new double[sz];
+            bufA = new double[sz]; bufB = new double[sz]; tmp = new double[sz];
         }
 
         public void Process(float[] L, float[] R, int n)
@@ -383,8 +331,6 @@ namespace Aurelia
                 A[i] = m + s; B[i] = m - s; // back to L/R
             }
 
-            if (fidOn) Fidelity(A, B, n);
-            if (dynOn) DynBoost(A, B, n);
             Limiter(A, B, n);
 
             double target = power ? 1 : 0;
@@ -418,63 +364,6 @@ namespace Aurelia
             }
             if (pl > PeakL) PeakL = pl;
             if (pr > PeakR) PeakR = pr;
-        }
-
-        void Fidelity(double[] Lb, double[] Rb, int n)
-        {
-            double[] h = harm;
-            ExciteChannel(Lb, h, n, ref e1aL, ref e1bL, ref e2aL, ref e2bL, ref envL);
-            fidShelfL.Process(Lb, tmp, n);
-            double amt = fidAmount;
-            for (int i = 0; i < n; i++) Lb[i] += amt * h[i];
-            ExciteChannel(Rb, h, n, ref e1aR, ref e1bR, ref e2aR, ref e2bR, ref envR);
-            fidShelfR.Process(Rb, tmp, n);
-            for (int i = 0; i < n; i++) Rb[i] += amt * h[i];
-        }
-
-        void ExciteChannel(double[] x, double[] outH, int n, ref double s1a, ref double s1b, ref double s2a, ref double s2b, ref double env)
-        {
-            double a0 = hp1[0], a1 = hp1[1], a2 = hp1[2], a3 = hp1[3], a4 = hp1[4];
-            double c0 = hp2[0], c1 = hp2[1], c2 = hp2[2], c3 = hp2[3], c4 = hp2[4];
-            double z1 = s1a, z2 = s1b, w1 = s2a, w2 = s2b, e = env, k = envK;
-            for (int i = 0; i < n; i++)
-            {
-                double xi = x[i];
-                double hpv = a0 * xi + z1; z1 = a1 * xi - a3 * hpv + z2; z2 = a2 * xi - a4 * hpv;
-                e += k * (hpv * hpv - e);
-                double rms = Math.Sqrt(e) + 1e-9;
-                double u = hpv / rms;
-                if (u > 4) u = 4; else if (u < -4) u = -4;
-                double au = u < 0 ? -u : u;
-                double nl = (0.35 * au + 0.25 * u * au) * rms;
-                double y = c0 * nl + w1; w1 = c1 * nl - c3 * y + w2; w2 = c2 * nl - c4 * y;
-                outH[i] = y;
-            }
-            s1a = z1; s1b = z2; s2a = w1; s2b = w2; env = e;
-        }
-
-        void DynBoost(double[] Lb, double[] Rb, int n)
-        {
-            double env = dynEnv, g = dynGain, tgt = dynTarget;
-            int cnt = dynCounter;
-            for (int i = 0; i < n; i++)
-            {
-                double l = Lb[i], r = Rb[i];
-                double p = Math.Max(l < 0 ? -l : l, r < 0 ? -r : r);
-                env = p > env ? detAtt * env + (1 - detAtt) * p : detRel * env + (1 - detRel) * p;
-                if (--cnt <= 0)
-                {
-                    cnt = 16;
-                    double envDb = 20 * Math.Log10(env + 1e-12);
-                    double gr = envDb > dynT ? (envDb - dynT) * dynSlope : 0;
-                    double gate = (envDb + 65) / 20; // don't lift the noise floor in near-silence
-                    if (gate < 0) gate = 0; else if (gate > 1) gate = 1;
-                    tgt = Math.Pow(10, (dynMakeup * gate - gr) / 20);
-                }
-                g += (tgt - g) * (tgt < g ? dynAtt : dynRel);
-                Lb[i] = l * g; Rb[i] = r * g;
-            }
-            dynEnv = env; dynGain = g; dynTarget = tgt; dynCounter = cnt;
         }
 
         void Limiter(double[] Lb, double[] Rb, int n)
