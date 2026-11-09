@@ -365,12 +365,14 @@ namespace Aurelia
             }
         }
 
-        public static void DrawGlyph(Graphics g, Glyph gl, Rectangle r, Color c)
+        public static void DrawGlyph(Graphics g, Glyph gl, Rectangle r, Color c) { DrawGlyph(g, gl, (RectangleF)r, c); }
+
+        public static void DrawGlyph(Graphics g, Glyph gl, RectangleF r, Color c)
         {
             if (Theme.HasIconFont && (gl == Glyph.Gear || gl == Glyph.Speaker || gl == Glyph.Save))
             {
                 string ch = gl == Glyph.Gear ? "" : (gl == Glyph.Speaker ? "" : "");
-                var rr = Rectangle.Inflate(r, Theme.S(4), Theme.S(4));
+                var rr = Rectangle.Round(RectangleF.Inflate(r, Theme.S(4), Theme.S(4)));
                 TextRenderer.DrawText(g, ch, Theme.Glyph, rr, c, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 return;
             }
@@ -383,8 +385,9 @@ namespace Aurelia
                 switch (gl)
                 {
                     case Glyph.Power:
-                        g.DrawArc(pen, cx - s * 0.8f, cy - s * 0.7f, s * 1.6f, s * 1.6f, -50, 280);
-                        g.DrawLine(pen, cx, cy - s * 0.95f, cx, cy - s * 0.1f);
+                        // ring centred on (cx, cy); the stem rises through the gap at the top
+                        g.DrawArc(pen, cx - s * 0.8f, cy - s * 0.8f, s * 1.6f, s * 1.6f, -50, 280);
+                        g.DrawLine(pen, cx, cy - s * 1.05f, cx, cy - s * 0.2f);
                         break;
                     case Glyph.Left:
                         g.DrawLines(pen, new[] { new PointF(cx + s * 0.3f, cy - s * 0.55f), new PointF(cx - s * 0.3f, cy), new PointF(cx + s * 0.3f, cy + s * 0.55f) });
@@ -440,10 +443,13 @@ namespace Aurelia
             Color ring = On ? Theme.Accent : Theme.ControlLine;
             Color bg = On ? Theme.AccentBg : Theme.Control;
             if (Hover) bg = Theme.Mix(bg, Color.White, 0.06);
-            using (var b = new SolidBrush(bg)) g.FillEllipse(b, r.X + 0.5f, r.Y + 0.5f, r.Width - 1.5f, r.Height - 1.5f);
-            using (var p = new Pen(ring, Math.Max(1.2f, Theme.SF(1.3)))) g.DrawEllipse(p, r.X + 0.5f, r.Y + 0.5f, r.Width - 1.5f, r.Height - 1.5f);
-            int gs = (int)(r.Width * 0.5);
-            Button_.DrawGlyph(g, Glyph.Power, new Rectangle(r.X + (r.Width - gs) / 2, r.Y + (r.Height - gs) / 2 + 1, gs, gs), On ? Theme.AccentHi : Theme.TextDim);
+            var circle = new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1.5f, r.Height - 1.5f);
+            using (var b = new SolidBrush(bg)) g.FillEllipse(b, circle);
+            using (var p = new Pen(ring, Math.Max(1.2f, Theme.SF(1.3)))) g.DrawEllipse(p, circle);
+            // glyph centred on the circle itself (float maths, no rounding drift)
+            float gs = circle.Width * 0.5f;
+            var gr = new RectangleF(circle.X + (circle.Width - gs) / 2, circle.Y + (circle.Height - gs) / 2, gs, gs);
+            Button_.DrawGlyph(g, Glyph.Power, gr, On ? Theme.AccentHi : Theme.TextDim);
         }
     }
 
