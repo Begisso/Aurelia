@@ -1,0 +1,10 @@
+# build output (rebuild with build.ps1)
+build/
+dist/
+
+# distributable archive (made separately, not versioned)
+*.zip
+
+# local settings / logs written next to the exe
+*.ini
+*-selftest.log
